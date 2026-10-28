@@ -124,6 +124,7 @@ class ObservationHandler(BaseHTTPRequestHandler):
 def build_server(host: str, port: int, certfile: str, keyfile: str) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), ObservationHandler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(certfile=certfile, keyfile=keyfile)
     server.socket = context.wrap_socket(server.socket, server_side=True)
     return server
