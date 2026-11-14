@@ -16,4 +16,5 @@ Image: `ghcr.io/stelzerkatharina/traefikenjoyers:latest` (built automatically by
 | `PORT`         | `8080`    | Port to listen on.                                                   |
 | `TLS_CERTFILE` | unset     | Path to certificate. Together with `TLS_KEYFILE` switches on HTTPS.  |
 | `TLS_KEYFILE`  | unset     | Path to private key.                                                 |
-ithub/workflows/docker-image.yml` runs on every push to `main`:
+
+
