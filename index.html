@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NERDS uc Wild Cam Log</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 2rem;
+      max-width: 900px;
+    }
+
+    form {
+      display: grid;
+      gap: 0.75rem;
+      max-width: 450px;
+      margin-bottom: 1.5rem;
+    }
+
+    label {
+      font-weight: 600;
+    }
+
+    input,
+    button {
+      padding: 0.5rem;
+      font-size: 1rem;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+
+    th,
+    td {
+      border: 1px solid #ccc;
+      padding: 0.5rem;
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+  <h1>Wild Cam Observation Log</h1>
+  <form id="observation-form">
+    <div>
+      <label for="animal">Animal</label><br>
+      <input id="animal" name="animal" type="text" required>
+    </div>
+    <div>
+      <label for="stream">Stream</label><br>
+      <input id="stream" name="stream" type="text" required>
+    </div>
+    <div>
+      <label for="visibleAt">Visible at</label><br>
+      <input id="visibleAt" name="visibleAt" type="datetime-local" required>
+    </div>
+    <button type="submit">Add observation</button>
+  </form>
+
+  <h2>Logged Observations</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Animal</th>
+        <th>Visible At</th>
+        <th>Stream</th>
+      </tr>
+    </thead>
+    <tbody id="log-entries"></tbody>
+  </table>
+
+  <script>
+    const form = document.getElementById('observation-form');
+    const entries = document.getElementById('log-entries');
+    const visibleAtInput = document.getElementById('visibleAt');
+
+    const setCurrentDateTime = () => {
+      const now = new Date();
+      now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+      visibleAtInput.value = now.toISOString().slice(0, 16);
+    };
+
+    setCurrentDateTime();
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+
+      const animal = form.animal.value.trim();
+      const stream = form.stream.value.trim();
+      const visibleAt = form.visibleAt.value;
+
+      if (!animal || !stream || !visibleAt) {
+        return;
+      }
+
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td></td>
+        <td></td>
+        <td></td>
+      `;
+      row.children[0].textContent = animal;
+      row.children[1].textContent = new Date(visibleAt).toLocaleString();
+      row.children[2].textContent = stream;
+      entries.appendChild(row);
+
+      form.reset();
+      setCurrentDateTime();
+      form.animal.focus();
+    });
+  </script>
+</body>
+</html>
