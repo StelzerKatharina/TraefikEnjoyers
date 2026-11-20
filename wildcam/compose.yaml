@@ -1,0 +1,79 @@
+# Both wild cam apps in one container environment, behind Traefik.
+#
+#   cp .env.example .env        # then set POSTGRES_PASSWORD
+#   docker compose up -d        # pulls the amd64 images built by GitHub Actions
+#   docker compose up --build   # or: build locally from source (native arch)
+#
+#   http://<host>/land-air/   -> Land & Air Cam
+#   http://<host>/sea/        -> Sea Cam
+
+name: wildcam
+
+services:
+  traefik:
+    image: traefik:v3.7
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  # Bundled database for a self-contained stack. To use the central DB VM instead,
+  # set DATABASE_URL in .env (both apps then use it; this container just idles).
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: wildcam
+      POSTGRES_USER: wildcam
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wildcam -d wildcam"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  land-air:
+    image: ghcr.io/stelzerkatharina/wildcam-land-air:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: land-air/Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://wildcam:${POSTGRES_PASSWORD}@postgres:5432/wildcam}
+      BASE_PATH: /land-air
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.land-air.rule=Path(`/land-air`) || PathPrefix(`/land-air/`)
+      - traefik.http.routers.land-air.entrypoints=web
+      - traefik.http.services.land-air.loadbalancer.server.port=8080
+    restart: unless-stopped
+
+  sea:
+    image: ghcr.io/stelzerkatharina/wildcam-sea:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: sea/Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://wildcam:${POSTGRES_PASSWORD}@postgres:5432/wildcam}
+      BASE_PATH: /sea
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.sea.rule=Path(`/sea`) || PathPrefix(`/sea/`)
+      - traefik.http.routers.sea.entrypoints=web
+      - traefik.http.services.sea.loadbalancer.server.port=8080
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -1,7 +1,14 @@
-name: Build and push Docker image
+name: Build and push Docker images
+
+# Builds both wild cam images for linux/amd64:
+#   ghcr.io/<owner>/wildcam-land-air
+#   ghcr.io/<owner>/wildcam-sea
+# Pull requests build and smoke-test only; pushes to main also publish to GHCR.
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
@@ -10,30 +17,112 @@ permissions:
   packages: write
 
 jobs:
-  build-and-push:
+  build:
+    name: wildcam-${{ matrix.app }} (linux/amd64)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [land-air, sea]
+    env:
+      LOCAL_TAG: wildcam-${{ matrix.app }}:ci
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Set image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wildcam-${{ matrix.app }}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long,prefix=
+
+      - name: Build for linux/amd64
+        uses: docker/build-push-action@v7
+        with:
+          context: wildcam
+          file: wildcam/${{ matrix.app }}/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.LOCAL_TAG }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+
+      - name: Verify image platform is linux/amd64
+        run: |
+          platform=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$LOCAL_TAG")
+          echo "Built image platform: $platform"
+          test "$platform" = "linux/amd64"
+
+      - name: Smoke test
+        env:
+          BASE: /${{ matrix.app }}
+        run: |
+          set -euo pipefail
+          docker run -d --name smoke -p 8080:8080 -e BASE_PATH="$BASE" "$LOCAL_TAG"
+          trap 'docker logs smoke; docker rm -f smoke >/dev/null' EXIT
+          url="http://127.0.0.1:8080"
+
+          for i in $(seq 1 30); do
+            if curl -fsS "$url/health"; then echo; break; fi
+            if [ "$i" = 30 ]; then echo "App did not come up"; exit 1; fi
+            sleep 1
+          done
+
+          # Bare prefix redirects to the prefixed page, which renders.
+          redirect=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$url$BASE")
+          test "$redirect" = "301 $url$BASE/"
+          page=$(curl -fsS "$url$BASE/")
+          grep -q "action=\"$BASE/observations\"" <<<"$page"
+
+          # Posting an observation redirects back and the entry is listed.
+          post=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -X POST \
+            --data 'animal=CI+smoke+test&stream=ci&visibleAt=2026-01-01T12:00' \
+            "$url$BASE/observations")
+          test "$post" = "303 $url$BASE/"
+          page=$(curl -fsS "$url$BASE/")
+          grep -q "CI smoke test" <<<"$page"
+
+          # The image's own HEALTHCHECK reports healthy.
+          for i in $(seq 1 30); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' smoke)
+            if [ "$status" = healthy ]; then echo "Container is healthy"; break; fi
+            if [ "$i" = 30 ]; then echo "Container health: $status"; exit 1; fi
+            sleep 1
+          done
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set image name
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
+      - name: Push linux/amd64 image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v7
         with:
-          context: .
+          context: wildcam
+          file: wildcam/${{ matrix.app }}/Dockerfile
+          platforms: linux/amd64
           push: true
-          tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+
+      - name: Verify pushed image is linux/amd64
+        if: github.event_name != 'pull_request'
+        run: |
+          manifest=$(docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA")
+          echo "$manifest"
+          grep -q 'linux/amd64' <<<"$manifest"
